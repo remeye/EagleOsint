@@ -193,6 +193,148 @@ def search_phone_social_media(phone):
 
 # ==================== END PHONE LOOKUP ENHANCEMENTS ====================
 
+# ==================== IMAGE/METADATA FUNCTIONS ====================
+
+def extract_image_metadata(filepath):
+    """Extract EXIF and metadata from image files."""
+    metadata = {}
+
+    try:
+        from PIL import Image
+        from PIL.ExifTags import TAGS, GPSTAGS
+
+        img = Image.open(filepath)
+        metadata['format'] = img.format
+        metadata['mode'] = img.mode
+        metadata['size'] = f"{img.width}x{img.height}"
+
+        # Extract EXIF data
+        exif_data = img._getexif()
+        if exif_data:
+            for tag_id, value in exif_data.items():
+                tag = TAGS.get(tag_id, tag_id)
+
+                # Handle GPS data specially
+                if tag == "GPSInfo":
+                    gps_data = {}
+                    for gps_tag_id, gps_value in value.items():
+                        gps_tag = GPSTAGS.get(gps_tag_id, gps_tag_id)
+                        gps_data[gps_tag] = gps_value
+                    metadata['GPSInfo'] = gps_data
+                elif isinstance(value, bytes):
+                    try:
+                        metadata[tag] = value.decode('utf-8', errors='ignore')
+                    except:
+                        metadata[tag] = str(value)[:100]
+                else:
+                    metadata[tag] = str(value)[:200] if len(str(value)) > 200 else value
+
+        img.close()
+    except ImportError:
+        metadata['error'] = "PIL/Pillow not installed. Run: pip install Pillow"
+    except Exception as e:
+        metadata['error'] = str(e)
+
+    return metadata
+
+def extract_gps_coordinates(gps_info):
+    """Convert GPS EXIF data to decimal coordinates."""
+    try:
+        def convert_to_degrees(value):
+            d = float(value[0])
+            m = float(value[1])
+            s = float(value[2])
+            return d + (m / 60.0) + (s / 3600.0)
+
+        lat = convert_to_degrees(gps_info.get('GPSLatitude', [0,0,0]))
+        lat_ref = gps_info.get('GPSLatitudeRef', 'N')
+        if lat_ref == 'S':
+            lat = -lat
+
+        lon = convert_to_degrees(gps_info.get('GPSLongitude', [0,0,0]))
+        lon_ref = gps_info.get('GPSLongitudeRef', 'E')
+        if lon_ref == 'W':
+            lon = -lon
+
+        return lat, lon
+    except:
+        return None, None
+
+def extract_pdf_metadata(filepath):
+    """Extract metadata from PDF files."""
+    metadata = {}
+
+    try:
+        import subprocess
+        # Try using pdfinfo if available
+        result = subprocess.run(['pdfinfo', filepath], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    metadata[key.strip()] = value.strip()
+    except:
+        pass
+
+    # Fallback: Try reading PDF header
+    try:
+        with open(filepath, 'rb') as f:
+            content = f.read(2048).decode('utf-8', errors='ignore')
+
+            # Extract common PDF metadata patterns
+            patterns = {
+                'Author': r'/Author\s*\(([^)]+)\)',
+                'Creator': r'/Creator\s*\(([^)]+)\)',
+                'Producer': r'/Producer\s*\(([^)]+)\)',
+                'Title': r'/Title\s*\(([^)]+)\)',
+                'CreationDate': r'/CreationDate\s*\(([^)]+)\)',
+                'ModDate': r'/ModDate\s*\(([^)]+)\)',
+            }
+
+            for key, pattern in patterns.items():
+                match = re.search(pattern, content)
+                if match:
+                    metadata[key] = match.group(1)
+    except Exception as e:
+        metadata['error'] = str(e)
+
+    return metadata
+
+def generate_reverse_image_urls(image_path_or_url):
+    """Generate URLs for reverse image search services."""
+
+    # If it's a URL, use it directly; otherwise, note that file upload is needed
+    is_url = image_path_or_url.startswith('http')
+
+    services = []
+
+    if is_url:
+        encoded_url = requests.utils.quote(image_path_or_url, safe='')
+        services = [
+            {'name': 'Google Images', 'url': f'https://lens.google.com/uploadbyurl?url={encoded_url}', 'type': 'direct'},
+            {'name': 'Yandex', 'url': f'https://yandex.com/images/search?url={encoded_url}&rpt=imageview', 'type': 'direct'},
+            {'name': 'Bing Visual', 'url': f'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:{encoded_url}', 'type': 'direct'},
+            {'name': 'TinEye', 'url': f'https://tineye.com/search?url={encoded_url}', 'type': 'direct'},
+        ]
+    else:
+        services = [
+            {'name': 'Google Images', 'url': 'https://images.google.com/ (upload image)', 'type': 'upload'},
+            {'name': 'Yandex', 'url': 'https://yandex.com/images/ (upload image)', 'type': 'upload'},
+            {'name': 'TinEye', 'url': 'https://tineye.com/ (upload image)', 'type': 'upload'},
+            {'name': 'Bing Visual', 'url': 'https://www.bing.com/visualsearch (upload image)', 'type': 'upload'},
+        ]
+
+    # Face-specific search services (always manual upload)
+    face_services = [
+        {'name': 'PimEyes', 'url': 'https://pimeyes.com/', 'note': 'Face recognition search'},
+        {'name': 'FaceCheck.ID', 'url': 'https://facecheck.id/', 'note': 'Face search engine'},
+        {'name': 'Search4faces', 'url': 'https://search4faces.com/', 'note': 'VK/OK face search'},
+    ]
+
+    return services, face_services
+
+# ==================== END IMAGE/METADATA FUNCTIONS ====================
+
 r = "\033[31m"
 g = "\033[32m"
 y = "\033[33m"
@@ -259,6 +401,8 @@ def menu():
         {w}{b}  13{w} Bitly Bypass  {d} Bypass all bitly urls
         {w}{b}  14{w} Github Lookup {d} Dump GitHub information
         {w}{b}  15{w} TempMail {d}      Generate Temp Mail and Mail Box
+        {w}{b}  16{w} Metadata      {d} Extract metadata from images/PDFs
+        {w}{b}  17{w} FaceSearch    {d} Reverse image & face search
         {w}{b}  00{w} Exit          {d} bye bye ):
         """)
     mainmenu()
@@ -284,6 +428,8 @@ def mainmenu():
                 elif cmd in ("14"): github_lookup()
                 elif cmd in ("13"): bypass_bitly()
                 elif cmd in ("15"): temp_mail_gen()
+                elif cmd in ("16"): metadata_extractor()
+                elif cmd in ("17"): face_search()
             else: continue
         except KeyboardInterrupt:
             exit(f"{r}\n{space}* Aborted !")
@@ -1010,7 +1156,182 @@ def settings():
     secure_write_file("configs/config.json", json.dumps(configs, indent=2))
     print(f"{space}{g}>{w} Setting saved with secure file permissions (600)")
 
-def temp_mail_gen(): 
+def metadata_extractor():
+    """Extract metadata from images and PDF files."""
+    filepath = input(f"{space}{b}>{w} Enter file path:{b} ")
+    filepath = sanitize_input(filepath.strip(), max_length=500)
+
+    if not filepath or not os.path.exists(filepath):
+        print(f"{space}{r}>{w} File not found: {filepath}")
+        getpass(space+"press enter for back to previous menu ")
+        menu()
+        return
+
+    print(w+lines)
+    print(f"{space}{B}  METADATA EXTRACTOR  {w}")
+    print(w+lines)
+
+    # Get file info
+    file_stat = os.stat(filepath)
+    file_ext = os.path.splitext(filepath)[1].lower()
+
+    print(f"\n{space}{p}[ FILE INFO ]{w}")
+    print(f"{space}{b}-{w} Filename            :    {y}{os.path.basename(filepath)}{w}")
+    print(f"{space}{b}-{w} Path                :    {y}{os.path.abspath(filepath)}{w}")
+    print(f"{space}{b}-{w} Size                :    {y}{file_stat.st_size} bytes ({file_stat.st_size/1024:.2f} KB){w}")
+    print(f"{space}{b}-{w} Extension           :    {y}{file_ext}{w}")
+
+    import datetime
+    print(f"{space}{b}-{w} Modified            :    {y}{datetime.datetime.fromtimestamp(file_stat.st_mtime)}{w}")
+    print(f"{space}{b}-{w} Accessed            :    {y}{datetime.datetime.fromtimestamp(file_stat.st_atime)}{w}")
+
+    # Image metadata
+    if file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
+        print(f"\n{space}{p}[ IMAGE METADATA ]{w}")
+        metadata = extract_image_metadata(filepath)
+
+        if 'error' in metadata:
+            print(f"{space}{r}-{w} Error: {metadata['error']}")
+        else:
+            # Basic info
+            for key in ['format', 'mode', 'size']:
+                if key in metadata:
+                    print(f"{space}{b}-{w} {key.capitalize():<20}:    {y}{metadata[key]}{w}")
+
+            # EXIF data
+            exif_keys = ['Make', 'Model', 'Software', 'DateTime', 'DateTimeOriginal',
+                        'ExposureTime', 'FNumber', 'ISOSpeedRatings', 'FocalLength',
+                        'Artist', 'Copyright', 'ImageDescription']
+
+            has_exif = False
+            for key in exif_keys:
+                if key in metadata:
+                    has_exif = True
+                    print(f"{space}{b}-{w} {key:<20}:    {y}{metadata[key]}{w}")
+
+            if not has_exif:
+                print(f"{space}{d}  (No EXIF data found){w}")
+
+            # GPS coordinates
+            if 'GPSInfo' in metadata:
+                print(f"\n{space}{p}[ GPS LOCATION ]{w}")
+                lat, lon = extract_gps_coordinates(metadata['GPSInfo'])
+                if lat and lon:
+                    print(f"{space}{b}-{w} Latitude            :    {g}{lat:.6f}{w}")
+                    print(f"{space}{b}-{w} Longitude           :    {g}{lon:.6f}{w}")
+                    print(f"{space}{b}-{w} Google Maps         :    {y}https://maps.google.com/?q={lat},{lon}{w}")
+                    print(f"{space}{b}-{w} OpenStreetMap       :    {y}https://www.openstreetmap.org/?mlat={lat}&mlon={lon}{w}")
+                    print(f"\n{space}{r}[!] WARNING: This image contains GPS location data!{w}")
+                else:
+                    print(f"{space}{d}  (GPS data present but could not be parsed){w}")
+
+    # PDF metadata
+    elif file_ext == '.pdf':
+        print(f"\n{space}{p}[ PDF METADATA ]{w}")
+        metadata = extract_pdf_metadata(filepath)
+
+        if not metadata or 'error' in metadata:
+            print(f"{space}{d}  (Could not extract PDF metadata){w}")
+            if 'error' in metadata:
+                print(f"{space}{r}-{w} Error: {metadata['error']}")
+        else:
+            for key, value in metadata.items():
+                if value:
+                    print(f"{space}{b}-{w} {key:<20}:    {y}{value}{w}")
+
+    else:
+        print(f"\n{space}{y}>{w} Unsupported file type for detailed extraction.")
+        print(f"{space}{y}>{w} Supported: .jpg, .jpeg, .png, .gif, .bmp, .tiff, .webp, .pdf")
+
+    print(w+lines)
+    getpass(space+"press enter for back to previous menu ")
+    menu()
+
+def face_search():
+    """Generate reverse image and face search URLs."""
+    print(f"{space}{B}  REVERSE IMAGE / FACE SEARCH  {w}")
+    print(w+lines)
+    print(f"{space}{d}Enter an image URL or local file path{w}")
+    print(f"{space}{d}For local files, you'll need to upload manually to each service{w}")
+    print(w+lines)
+
+    image_input = input(f"{space}{b}>{w} Enter image URL or file path:{b} ").strip()
+
+    if not image_input:
+        menu()
+        return
+
+    is_url = image_input.startswith('http')
+    is_file = os.path.exists(image_input)
+
+    if not is_url and not is_file:
+        print(f"{space}{r}>{w} Invalid input: Not a valid URL or existing file path")
+        getpass(space+"press enter for back to previous menu ")
+        menu()
+        return
+
+    print(w+lines)
+
+    # If it's a file, first extract metadata
+    if is_file:
+        print(f"\n{space}{p}[ FILE DETECTED ]{w}")
+        print(f"{space}{b}-{w} File: {y}{image_input}{w}")
+
+        # Check if it's an image
+        file_ext = os.path.splitext(image_input)[1].lower()
+        if file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']:
+            metadata = extract_image_metadata(image_input)
+            if 'GPSInfo' in metadata:
+                lat, lon = extract_gps_coordinates(metadata['GPSInfo'])
+                if lat and lon:
+                    print(f"{space}{r}[!] Image contains GPS: {lat:.4f}, {lon:.4f}{w}")
+
+    # Generate search URLs
+    services, face_services = generate_reverse_image_urls(image_input)
+
+    print(f"\n{space}{p}[ REVERSE IMAGE SEARCH ]{w}")
+    for service in services:
+        if service.get('type') == 'direct':
+            print(f"{space}{g}[DIRECT]{w} {service['name']}")
+            print(f"{space}        {y}{service['url']}{w}")
+        else:
+            print(f"{space}{y}[UPLOAD]{w} {service['name']}")
+            print(f"{space}        {d}{service['url']}{w}")
+
+    print(f"\n{space}{p}[ FACE RECOGNITION SEARCH ]{w}")
+    print(f"{space}{r}[!] Note: Face search services require manual upload{w}")
+    for service in face_services:
+        print(f"{space}{b}-{w} {service['name']:<15} {d}({service.get('note', '')}){w}")
+        print(f"{space}  {y}{service['url']}{w}")
+
+    # Additional OSINT tips
+    print(f"\n{space}{p}[ ADDITIONAL OSINT TIPS ]{w}")
+    if is_url:
+        encoded = requests.utils.quote(image_input, safe='')
+        print(f"{space}{b}-{w} Check image hosting metadata")
+        print(f"{space}{b}-{w} Look for EXIF in original upload")
+        print(f"{space}{b}-{w} Search filename patterns")
+    else:
+        print(f"{space}{b}-{w} Upload to multiple services for best results")
+        print(f"{space}{b}-{w} Crop to face only for face searches")
+        print(f"{space}{b}-{w} Try both original and compressed versions")
+
+    print(w+lines)
+
+    # Option to copy URL to clipboard
+    if is_url and services:
+        try:
+            copy_choice = input(f"{space}{b}>{w} Copy first search URL to clipboard? (y/N):{b} ").lower().strip()
+            if copy_choice == 'y':
+                pyperclip.copy(services[0]['url'])
+                print(f"{space}{g}>{w} Copied to clipboard!")
+        except:
+            pass
+
+    getpass(space+"press enter for back to previous menu ")
+    menu()
+
+def temp_mail_gen():
     API = 'https://www.1secmail.com/api/v1/'
     domainList = ['1secmail.com', '1secmail.net', '1secmail.org']
     domain = random.choice(domainList)
@@ -1099,7 +1420,7 @@ if __name__ == "__main__":
         elif arg[1] in ("settings", "configs"):
             settings()
 
-        elif arg[1] in ("01", "1", "02", "2", "03", "3", "04", "4", "05", "5", "06", "6", "07", "7", "08", "8", "09", "9", "10", "11", "12", "13", "14"):
+        elif arg[1] in ("01", "1", "02", "2", "03", "3", "04", "4", "05", "5", "06", "6", "07", "7", "08", "8", "09", "9", "10", "11", "12", "13", "14", "15", "16", "17"):
             print(logo)
             if arg[1] in ("1","01"): userrecon()
             elif arg[1] in ("2","02"): fb.facedumper()
@@ -1116,5 +1437,7 @@ if __name__ == "__main__":
             elif arg[1] in ("14"): github_lookup()
             elif arg[1] in ("13"): bypass_bitly()
             elif arg[1] in ("15"): temp_mail_gen()
+            elif arg[1] in ("16"): metadata_extractor()
+            elif arg[1] in ("17"): face_search()
         else: exit(r+"* no command found for: "+str(arg[1:]).replace("[","").replace("]",""))
     else: exit(r+"* no command found for: "+str(arg[1:]).replace("[","").replace("]",""))                   

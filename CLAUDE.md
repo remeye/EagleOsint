@@ -30,7 +30,7 @@ The entire application is contained in `EagleOsint.py` (~857 lines). This design
 - No complex import structures
 
 ### Menu-Driven CLI
-The application uses a numeric menu system accessible via the `menu()` function. Users select features by number (01-15).
+The application uses a numeric menu system accessible via the `menu()` function. Users select features by number (01-17).
 
 ### Threading Model
 Network-intensive operations (username recon, email validation) use Python's `threading.Thread` for concurrent requests, improving performance when checking multiple URLs/emails.
@@ -54,6 +54,8 @@ Network-intensive operations (username recon, email validation) use Python's `th
 | 13 | `bypass_bitly()` | Bitly URL resolver |
 | 14 | `github_lookup()` | GitHub user information |
 | 15 | `temp_mail_gen()` | Temporary email generation (1secmail.com) |
+| 16 | `metadata_extractor()` | Extract EXIF/metadata from images and PDFs |
+| 17 | `face_search()` | Reverse image and face recognition search |
 
 ## Dependencies
 
@@ -70,6 +72,7 @@ lxml
 beautifulsoup4
 tabulate
 pyperclip
+Pillow          # For image metadata extraction
 ```
 
 ## Configuration
