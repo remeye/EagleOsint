@@ -74,7 +74,124 @@ def print_security_warning(message):
     """Print a security warning."""
     print(f"\033[33m[SECURITY WARNING]\033[0m {message}")
 
-# ==================== END SECURITY FUNCTIONS ====================
+# ==================== PHONE LOOKUP ENHANCEMENTS ====================
+
+# German carrier database (offline lookup by prefix)
+GERMAN_CARRIERS = {
+    # T-Mobile / Telekom
+    '0151': 'T-Mobile (Telekom)', '0160': 'T-Mobile (Telekom)', '0170': 'T-Mobile (Telekom)',
+    '0171': 'T-Mobile (Telekom)', '0175': 'T-Mobile (Telekom)',
+    # Vodafone
+    '0152': 'Vodafone', '0162': 'Vodafone', '0172': 'Vodafone', '0173': 'Vodafone', '0174': 'Vodafone',
+    # O2 / Telefónica
+    '0157': 'O2 (Telefónica)', '0159': 'O2 (Telefónica)', '0163': 'O2 (Telefónica)',
+    '0176': 'O2 (Telefónica)', '0177': 'O2 (Telefónica)', '0178': 'O2 (Telefónica)', '0179': 'O2 (Telefónica)',
+    # E-Plus (now O2)
+    '0155': 'O2 (ehem. E-Plus)', '0156': 'O2 (ehem. E-Plus)', '0164': 'O2 (ehem. E-Plus)',
+    # Drillisch / 1&1
+    '0153': '1&1 Drillisch', '0161': '1&1 Drillisch', '0165': '1&1 Drillisch', '0166': '1&1 Drillisch', '0167': '1&1 Drillisch',
+}
+
+# Country codes for auto-detection
+COUNTRY_PREFIXES = {
+    '0049': '+49', '49': '+49',  # Germany
+    '0043': '+43', '43': '+43',  # Austria
+    '0041': '+41', '41': '+41',  # Switzerland
+    '0044': '+44', '44': '+44',  # UK
+    '001': '+1', '1': '+1',      # USA/Canada
+    '0033': '+33', '33': '+33',  # France
+    '0031': '+31', '31': '+31',  # Netherlands
+}
+
+def normalize_phone_number(phone, default_country='+49'):
+    """Normalize phone number to international format."""
+    phone = phone.strip().replace(' ', '').replace('-', '').replace('/', '')
+
+    # Already international format
+    if phone.startswith('+'):
+        return phone
+
+    # German format starting with 0
+    if phone.startswith('00'):
+        # International format with 00 prefix
+        for prefix, intl in COUNTRY_PREFIXES.items():
+            if phone.startswith(prefix):
+                return intl + phone[len(prefix):]
+        return '+' + phone[2:]
+
+    # Local format (e.g., 0160...)
+    if phone.startswith('0'):
+        return default_country + phone[1:]
+
+    return default_country + phone
+
+def get_carrier_offline(phone):
+    """Get carrier from offline database (German numbers only)."""
+    # Normalize to local format for prefix matching
+    if phone.startswith('+49'):
+        local = '0' + phone[3:]
+    elif phone.startswith('0049'):
+        local = '0' + phone[4:]
+    else:
+        local = phone
+
+    # Check prefixes
+    for prefix, carrier in GERMAN_CARRIERS.items():
+        if local.startswith(prefix):
+            return carrier
+    return None
+
+def get_phone_type_offline(phone):
+    """Determine if mobile or landline (German numbers)."""
+    normalized = normalize_phone_number(phone)
+    if normalized.startswith('+49'):
+        local = '0' + normalized[3:]
+        # German mobile prefixes start with 015, 016, 017
+        if local[:3] in ['015', '016', '017']:
+            return 'mobile'
+        # Landline prefixes
+        if local[:2] in ['02', '03', '04', '05', '06', '07', '08', '09']:
+            return 'landline'
+    return 'unknown'
+
+def check_spam_reputation(phone):
+    """Check phone number spam reputation using free APIs."""
+    results = []
+    normalized = normalize_phone_number(phone)
+
+    # Check with tellows (scraping - no API key needed)
+    try:
+        tellows_url = f"https://www.tellows.de/num/{normalized.replace('+', '00')}"
+        # Note: In production, you'd scrape this. For now, return placeholder
+        results.append({'source': 'tellows', 'url': tellows_url, 'status': 'check_manually'})
+    except:
+        pass
+
+    # Check with CleverDialer
+    try:
+        cleverdialer_url = f"https://www.cleverdialer.de/telefonnummer/{normalized.replace('+49', '0')}"
+        results.append({'source': 'cleverdialer', 'url': cleverdialer_url, 'status': 'check_manually'})
+    except:
+        pass
+
+    return results
+
+def search_phone_social_media(phone):
+    """Generate social media search URLs for phone number."""
+    normalized = normalize_phone_number(phone)
+    local = normalized.replace('+49', '0') if normalized.startswith('+49') else normalized
+
+    searches = [
+        {'platform': 'Google', 'url': f'https://www.google.com/search?q="{normalized}"'},
+        {'platform': 'Google (local)', 'url': f'https://www.google.com/search?q="{local}"'},
+        {'platform': 'Facebook', 'url': f'https://www.facebook.com/search/top?q={normalized}'},
+        {'platform': 'LinkedIn', 'url': f'https://www.linkedin.com/search/results/all/?keywords={normalized}'},
+        {'platform': 'Sync.me', 'url': f'https://sync.me/search/?number={normalized}'},
+        {'platform': 'Truecaller', 'url': f'https://www.truecaller.com/search/de/{local}'},
+    ]
+    return searches
+
+# ==================== END PHONE LOOKUP ENHANCEMENTS ====================
 
 r = "\033[31m"
 g = "\033[32m"
@@ -272,25 +389,95 @@ def infoga(opt):
 
 def phoneinfo():
     no = sanitize_phone(input(f"{space}{b}>{w} enter number:{b} "))
-    api_key = configs['veriphone-api-key']
+    if not no:
+        menu()
+        return
+
+    # Normalize phone number (auto-add country code)
+    normalized = normalize_phone_number(no)
+    local_format = normalized.replace('+49', '0') if normalized.startswith('+49') else no
+
+    print(w+lines)
+    print(f"{space}{B}  PHONE ANALYSIS  {w}")
+    print(w+lines)
+
+    # ===== SECTION 1: Basic Info (Offline) =====
+    print(f"\n{space}{p}[ BASIC INFO (Offline) ]{w}")
+    print(f"{space}{b}-{w} Input               :    {y}{no}{w}")
+    print(f"{space}{b}-{w} International       :    {y}{normalized}{w}")
+    print(f"{space}{b}-{w} Local Format        :    {y}{local_format}{w}")
+
+    # Offline carrier detection
+    carrier_offline = get_carrier_offline(no)
+    if carrier_offline:
+        print(f"{space}{b}-{w} Carrier (offline)   :    {g}{carrier_offline}{w}")
+
+    # Phone type detection
+    phone_type = get_phone_type_offline(no)
+    print(f"{space}{b}-{w} Type                :    {y}{phone_type}{w}")
+
+    # ===== SECTION 2: API Lookup (Veriphone) =====
+    print(f"\n{space}{p}[ API LOOKUP (Veriphone) ]{w}")
+    api_key = configs.get('veriphone-api-key', '')
     if api_key == "":
         print_security_warning("API key will be stored in plaintext in configs/config.json")
         api_key = input(f"{space}{w}{b}>{w} enter your api key (https://veriphone.io) :{b} ")
-        configs["veriphone-api-key"] = api_key
-        secure_write_file("configs/config.json", json.dumps(configs, indent=2))
-    if not no: menu()
-    print(w+lines)
+        if api_key:
+            configs["veriphone-api-key"] = api_key
+            secure_write_file("configs/config.json", json.dumps(configs, indent=2))
 
-    url = "https://api.veriphone.io/v2/verify?phone={}&key=" + api_key
-    req = requests.get(url.format(no))
-    res = json.loads(req.text)
-    
-    for info in res:
-        print(f"{space}{b}-{w} {info}{' '*(23-len(info))}:    {y}{res[info]}{w}")
-    
+    if api_key:
+        try:
+            url = "https://api.veriphone.io/v2/verify?phone={}&key=" + api_key
+            req = requests.get(url.format(normalized), timeout=10)
+            res = json.loads(req.text)
+            for info in res:
+                print(f"{space}{b}-{w} {info}{' '*(20-len(str(info)))}:    {y}{res[info]}{w}")
+        except requests.exceptions.RequestException as e:
+            print(f"{space}{r}-{w} API Error: {e}")
+        except json.JSONDecodeError:
+            print(f"{space}{r}-{w} Invalid API response")
+    else:
+        print(f"{space}{d}  (skipped - no API key){w}")
+
+    # ===== SECTION 3: NumVerify API (optional) =====
+    print(f"\n{space}{p}[ API LOOKUP (NumVerify) ]{w}")
+    numverify_key = configs.get('numverify-api-key', '')
+    if numverify_key:
+        try:
+            nv_url = f"http://apilayer.net/api/validate?access_key={numverify_key}&number={normalized}"
+            nv_req = requests.get(nv_url, timeout=10)
+            nv_res = json.loads(nv_req.text)
+            for info in nv_res:
+                if info not in ['valid', 'number']:  # Skip duplicates
+                    print(f"{space}{b}-{w} {info}{' '*(20-len(str(info)))}:    {y}{nv_res[info]}{w}")
+        except:
+            print(f"{space}{r}-{w} NumVerify API Error")
+    else:
+        print(f"{space}{d}  (skipped - no API key, get free key at numverify.com){w}")
+
+    # ===== SECTION 4: Spam/Reputation Check =====
+    print(f"\n{space}{p}[ SPAM/REPUTATION CHECK ]{w}")
+    spam_results = check_spam_reputation(no)
+    for result in spam_results:
+        print(f"{space}{b}-{w} {result['source']}: {d}{result['url']}{w}")
+
+    # ===== SECTION 5: Social Media Search =====
+    print(f"\n{space}{p}[ SOCIAL MEDIA SEARCH ]{w}")
+    social_results = search_phone_social_media(no)
+    for result in social_results:
+        print(f"{space}{b}-{w} {result['platform']}: {d}{result['url']}{w}")
+
+    # ===== SECTION 6: Copy to Clipboard =====
+    try:
+        pyperclip.copy(normalized)
+        print(f"\n{space}{g}✓{w} International number copied to clipboard")
+    except:
+        pass
+
     print(w+lines)
-    print(f"{space}{B} DONE {R} {no} {w}")
-    
+    print(f"{space}{B} DONE {R} {normalized} {w}")
+
     getpass(space+"press enter for back to previous menu ")
     menu()
 
