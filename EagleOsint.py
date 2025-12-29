@@ -20,7 +20,61 @@ import time
 import sys
 import re
 import os
+import stat
 
+# ==================== SECURITY FUNCTIONS ====================
+
+def sanitize_input(user_input, allowed_chars=None, max_length=500):
+    """Sanitize user input to prevent injection attacks."""
+    if not user_input:
+        return ""
+    # Remove null bytes and control characters
+    sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', str(user_input))
+    # Limit length
+    sanitized = sanitized[:max_length]
+    # If specific allowed chars defined, filter to those
+    if allowed_chars:
+        sanitized = ''.join(c for c in sanitized if c in allowed_chars)
+    return sanitized.strip()
+
+def sanitize_username(username):
+    """Sanitize username - only alphanumeric, underscore, dot, hyphen."""
+    allowed = string.ascii_letters + string.digits + '_.-'
+    return sanitize_input(username, allowed_chars=allowed, max_length=100)
+
+def sanitize_domain(domain):
+    """Sanitize domain/IP input."""
+    allowed = string.ascii_letters + string.digits + '.-:'
+    return sanitize_input(domain, allowed_chars=allowed, max_length=255)
+
+def sanitize_phone(phone):
+    """Sanitize phone number - only digits and +."""
+    allowed = string.digits + '+'
+    return sanitize_input(phone, allowed_chars=allowed, max_length=20)
+
+def sanitize_email(email):
+    """Sanitize email input."""
+    allowed = string.ascii_letters + string.digits + '@._+-'
+    return sanitize_input(email, allowed_chars=allowed, max_length=254)
+
+def set_secure_permissions(filepath):
+    """Set file permissions to owner-only (600)."""
+    try:
+        os.chmod(filepath, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
+
+def secure_write_file(filepath, content):
+    """Write file with secure permissions."""
+    with open(filepath, 'w') as f:
+        f.write(content)
+    set_secure_permissions(filepath)
+
+def print_security_warning(message):
+    """Print a security warning."""
+    print(f"\033[33m[SECURITY WARNING]\033[0m {message}")
+
+# ==================== END SECURITY FUNCTIONS ====================
 
 r = "\033[31m"
 g = "\033[32m"
@@ -170,10 +224,15 @@ def check_email(email, api, total, ok, f):
     
 
 def iplocation():
-    print(f"{space}{b}>{w} local IP: {os.popen('curl ifconfig.co --silent').readline().strip()}")
-    x = input(f"{space}{b}>{w} enter IP:{b} ")
-    if x.split(".")[0].isnumeric(): pass
-    else: menu()
+    # SECURITY: Ask before revealing local IP
+    show_local = input(f"{space}{b}>{w} Show your local IP? (y/N):{b} ").lower().strip()
+    if show_local == 'y':
+        print_security_warning("Fetching your public IP address...")
+        print(f"{space}{b}>{w} local IP: {os.popen('curl ifconfig.co --silent').readline().strip()}")
+    x = sanitize_domain(input(f"{space}{b}>{w} enter IP:{b} "))
+    if not x or not x.split(".")[0].isnumeric():
+        menu()
+        return
     print(w+lines)
     req = requests.get("https://ipinfo.io/"+x+"/json").json()
     try: ip = "IP: "+req["ip"]
@@ -196,10 +255,13 @@ def iplocation():
     menu()
 
 def infoga(opt):
-    x = input(f"{space}{b}>{w} enter domain or IP:{b} ")
+    x = sanitize_domain(input(f"{space}{b}>{w} enter domain or IP:{b} "))
     if not x: menu()
-    if x.split(".")[0].isnumeric(): x = socket.gethostbyname(x)
-    else: pass
+    try:
+        if x.split(".")[0].isnumeric(): x = socket.gethostbyname(x)
+    except socket.gaierror:
+        print(f"{space}{r}>{w} Invalid domain or IP")
+        menu()
     print(w+lines)
     req = requests.get(apihack.format(opt,x),stream=True)
     for res in req.iter_lines():
@@ -209,13 +271,13 @@ def infoga(opt):
     menu()
 
 def phoneinfo():
-    no = input(f"{space}{b}>{w} enter number:{b} ")
+    no = sanitize_phone(input(f"{space}{b}>{w} enter number:{b} "))
     api_key = configs['veriphone-api-key']
     if api_key == "":
+        print_security_warning("API key will be stored in plaintext in configs/config.json")
         api_key = input(f"{space}{w}{b}>{w} enter your api key (https://veriphone.io) :{b} ")
-        with open("configs/config.json", "w") as configs_file:
-            configs["veriphone-api-key"] = api_key
-            configs_file.write(json.dumps(configs))
+        configs["veriphone-api-key"] = api_key
+        secure_write_file("configs/config.json", json.dumps(configs, indent=2))
     if not no: menu()
     print(w+lines)
 
@@ -233,7 +295,7 @@ def phoneinfo():
     menu()
 
 def godorker():
-    dork = input(f"{space}{b}>{w} enter dork (inurl/intext/etc):{b} ").lower()
+    dork = sanitize_input(input(f"{space}{b}>{w} enter dork (inurl/intext/etc):{b} "), max_length=200).lower()
     if not dork: menu()
     print(w+lines)
     urls = []
@@ -265,7 +327,9 @@ def godorker():
     menu()
 
 def mailfinder():
-    fullname = input(f"{space}{b}>{w} enter name:{b} ").lower()
+    # Allow letters, spaces, and common name characters
+    allowed_name_chars = string.ascii_letters + ' ' + '-\''
+    fullname = sanitize_input(input(f"{space}{b}>{w} enter name:{b} "), allowed_chars=allowed_name_chars, max_length=100).lower()
     if not fullname: menu()
     data = [
         "gmail.com",
@@ -325,10 +389,10 @@ def mailfinder():
     try:
         api = configs["real-email-api-key"]
         if api == "":
+            print_security_warning("API key will be stored in plaintext in configs/config.json")
             api = input(f"{space}{w}{b}>{w} enter your api key (https://isitarealemail.com) :{b} ")
-            with open("configs/config.json", "w") as configs_file:
-                configs["real-email-api-key"] = api
-                configs_file.write(json.dumps(configs))
+            configs["real-email-api-key"] = api
+            secure_write_file("configs/config.json", json.dumps(configs, indent=2))
         print(w+lines)
         for user in listuser:
             for domain in data:
@@ -357,7 +421,7 @@ def mailfinder():
 
 def userrecon():
     global userrecon_results, userrecon_working, userrecon_num
-    username = input(f"{space}{w}{b}>{w} enter username:{b} ").lower()
+    username = sanitize_username(input(f"{space}{w}{b}>{w} enter username:{b} ")).lower()
     if not username: menu()
     urllist = [
         "https://facebook.com/{}",
@@ -452,8 +516,18 @@ def userrecon():
 
 def bypass_bitly():
     print(w+lines)
-    bitly_url = input(f"{space}{w}{b}>{w} Bitly URL: {b}")
-    bitly_code = requests.get(bitly_url, allow_redirects=False)
+    bitly_url = input(f"{space}{w}{b}>{w} Bitly URL: {b}").strip()
+    # Basic URL validation
+    if not bitly_url.startswith(('http://', 'https://')):
+        print(f"{space}{r}>{w} Invalid URL format")
+        menu()
+        return
+    try:
+        bitly_code = requests.get(bitly_url, allow_redirects=False, timeout=10)
+    except requests.exceptions.RequestException as e:
+        print(f"{space}{r}>{w} Request failed: {e}")
+        menu()
+        return
     soup = BeautifulSoup(bitly_code.text, features="lxml")
     original_link = soup.find_all('a', href=True)[0]['href']
     print(f"{space}{B} DONE {w} Original URL: \u001b[38;5;32m{original_link}")
@@ -463,7 +537,10 @@ def bypass_bitly():
 
 def github_lookup():
     print(w+lines)
-    github_username = input(f"{space}{w}{b}>{w} Github username: {b}")
+    github_username = sanitize_username(input(f"{space}{w}{b}>{w} Github username: {b}"))
+    if not github_username:
+        menu()
+        return
     print(w)
     req = requests.get(f"https://api.github.com/users/{github_username}")
     res = json.loads(req.text)
@@ -502,6 +579,8 @@ class Facebook():
         try:
             coki = open(cookifile).read()
         except FileNotFoundError:
+            print_security_warning("Facebook cookies will be stored in ~/.cookies")
+            print_security_warning("Cookies provide full access to your Facebook account!")
             while True:
                 coki = getpass(f"{space}{b}>{w} enter facebook cookies (hidden input): ")
                 if coki: break
@@ -510,9 +589,7 @@ class Facebook():
         req = requests.get(mbasic.format("/me",verify=False),cookies=cookies).content
         if "mbasic_logout_button" in str(req):
             if "Apa yang Anda pikirkan sekarang" in str(req):
-                with open(cookifile,"w") as f:
-                    f.write(cookies["cookie"])
-                f.close()
+                secure_write_file(cookifile, cookies["cookie"])
             else:
                 try:
                     requests.get(mbasic.format(parser(req,"html.parser").find("a",string="Bahasa Indonesia")["href"]),cookies=cookies)
@@ -740,10 +817,11 @@ def settings():
         if option in ("0", "00"):
             sys.exit()
     
+    print_security_warning("Settings will be stored in plaintext in configs/config.json")
     new_value = input(f"{space}{lr}>{r} Insert the new value of {configs_num[option]} :{lr} ")
     configs[configs_num[option]] = new_value
-    with open("configs/config.json", "w") as configs_file:
-        configs_file.write(json.dumps(configs))
+    secure_write_file("configs/config.json", json.dumps(configs, indent=2))
+    print(f"{space}{g}>{w} Setting saved with secure file permissions (600)")
 
 def temp_mail_gen(): 
     API = 'https://www.1secmail.com/api/v1/'
@@ -826,12 +904,11 @@ if __name__ == "__main__":
     if len(arg) == 1: menu()
     elif len(arg) == 2:
         if arg[1] == "update":
-            if which("termux-setup-storage"): path = "$PREFIX/bin/EagleOsint"
-            else:
-                if os.path.isdir("/usr/local/bin/"): path = "/usr/local/bin/EagleOsint"
-                else: path = "/usr/bin/sigit"
-            os.system(f"wget https://raw.githubusercontent.com/retr0-g04t/EagleOsint/main/EagleOsint.py -O {path} && chmod +x {path}")
-            print(f"{b}>{w} wrapper script have been updated")
+            # SECURITY: Remote update disabled - supply chain attack risk
+            # Updates should be done manually via git pull from your trusted fork
+            print(f"{r}>{w} Remote update is disabled for security reasons.")
+            print(f"{r}>{w} Please update manually using: git pull origin main")
+            print(f"{y}>{w} This prevents potential supply chain attacks from untrusted sources.")
         elif arg[1] in ("settings", "configs"):
             settings()
 
