@@ -126,7 +126,8 @@ python3 EagleOsint.py settings  # Same as configs
 
 ### Update
 ```bash
-python3 EagleOsint.py update    # Pull latest from GitHub
+# Remote update is DISABLED for security - use git instead:
+git pull origin main
 ```
 
 ## Code Conventions
@@ -209,12 +210,45 @@ for item in items:
     sleep(0.2)  # Rate limiting
 ```
 
-## Security Considerations
+## Security Measures
 
-- API keys are stored in plaintext in `config.json`
-- Facebook cookies are stored in `~/.cookies`
-- No input sanitization on user queries
+This fork includes security hardening compared to the original repository:
+
+### Input Sanitization
+All user inputs are now sanitized using dedicated functions:
+- `sanitize_input()` - General input sanitization (removes control chars, limits length)
+- `sanitize_username()` - Alphanumeric + `_.-` only, max 100 chars
+- `sanitize_domain()` - Domain/IP characters only, max 255 chars
+- `sanitize_phone()` - Digits and `+` only, max 20 chars
+- `sanitize_email()` - Email characters only, max 254 chars
+
+### Secure File Permissions
+Sensitive files are now written with owner-only permissions (600):
+- `configs/config.json` - API keys
+- `~/.cookies` - Facebook session cookies
+- Uses `secure_write_file()` and `set_secure_permissions()` functions
+
+### Disabled Remote Update
+The original `update` command downloaded code from an external repository, creating a supply chain attack vector. This has been **disabled**. Updates should be done via:
+```bash
+git pull origin main
+```
+
+### Security Warnings
+Users are now warned when:
+- Storing API keys in config files
+- Storing Facebook cookies
+- Revealing their public IP address (now opt-in)
+
+### URL Validation
+The Bitly bypass function now validates URLs before making requests.
+
+## Remaining Security Considerations
+
+- API keys are still stored in plaintext (but with restricted file permissions)
+- Facebook cookies are still stored locally (but with restricted file permissions)
 - Rate limiting via `sleep()` calls between requests
+- External API calls transmit data to third-party services
 
 ## Disclaimer
 
